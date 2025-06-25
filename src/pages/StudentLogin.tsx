@@ -15,6 +15,11 @@ const StudentLogin = () => {
   const [otp, setOtp] = useState("");
   const [step, setStep] = useState<"phone" | "otp">("phone");
   const [loading, setLoading] = useState(false);
+  const [sentOtp, setSentOtp] = useState("");
+
+  const generateOTP = () => {
+    return Math.floor(100000 + Math.random() * 900000).toString();
+  };
 
   const handleSendOTP = async () => {
     if (!phoneNumber || phoneNumber.length < 10) {
@@ -28,32 +33,47 @@ const StudentLogin = () => {
 
     setLoading(true);
     try {
-      // Create or get user with phone number
-      const { data: existingUser } = await supabase
+      // Generate a random OTP for demo purposes
+      const generatedOtp = generateOTP();
+      setSentOtp(generatedOtp);
+
+      // Check if user exists, if not create one
+      const { data: existingUser, error: fetchError } = await supabase
         .from('users')
         .select('*')
         .eq('phone_number', phoneNumber)
-        .single();
+        .maybeSingle();
+
+      if (fetchError) {
+        console.error('Error fetching user:', fetchError);
+      }
 
       if (!existingUser) {
         // Create new user
-        const { error } = await supabase
+        const { error: insertError } = await supabase
           .from('users')
-          .insert([{ phone_number: phoneNumber, role: 'student' }]);
+          .insert([{ 
+            phone_number: phoneNumber, 
+            role: 'student' 
+          }]);
         
-        if (error) throw error;
+        if (insertError) {
+          console.error('Error creating user:', insertError);
+          throw insertError;
+        }
       }
 
-      // For demo purposes, we'll simulate OTP sending
+      // Simulate OTP sending delay
       setTimeout(() => {
         setLoading(false);
         setStep("otp");
         toast({
           title: "OTP Sent!",
-          description: `Verification code sent to ${phoneNumber}`,
+          description: `Verification code sent to ${phoneNumber}. For demo: ${generatedOtp}`,
         });
       }, 1500);
     } catch (error) {
+      console.error('Error in handleSendOTP:', error);
       setLoading(false);
       toast({
         title: "Error",
@@ -73,23 +93,35 @@ const StudentLogin = () => {
       return;
     }
 
+    if (otp !== sentOtp) {
+      toast({
+        title: "Invalid OTP",
+        description: "The OTP you entered is incorrect. Please try again.",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setLoading(true);
     try {
-      // For demo purposes, accept any 6-digit OTP
-      // In production, you would verify the actual OTP
-      
-      // Get user data
-      const { data: userData } = await supabase
+      // Get user data after successful OTP verification
+      const { data: userData, error: userError } = await supabase
         .from('users')
         .select('*')
         .eq('phone_number', phoneNumber)
         .single();
+
+      if (userError) {
+        console.error('Error fetching user data:', userError);
+        throw userError;
+      }
 
       if (userData) {
         // Store user info in localStorage for demo
         localStorage.setItem("userRole", userData.role);
         localStorage.setItem("userPhone", phoneNumber);
         localStorage.setItem("userId", userData.id);
+        localStorage.setItem("isLoggedIn", "true");
         
         toast({
           title: "Login Successful!",
@@ -98,6 +130,7 @@ const StudentLogin = () => {
         navigate("/student-dashboard");
       }
     } catch (error) {
+      console.error('Error in handleVerifyOTP:', error);
       toast({
         title: "Login Failed",
         description: "Please try again",
@@ -105,6 +138,12 @@ const StudentLogin = () => {
       });
     }
     setLoading(false);
+  };
+
+  const handleResendOTP = () => {
+    setOtp("");
+    setSentOtp("");
+    handleSendOTP();
   };
 
   return (
@@ -183,13 +222,23 @@ const StudentLogin = () => {
                 >
                   {loading ? "Verifying..." : "Verify & Login"}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => setStep("phone")}
-                  className="w-full text-purple-600"
-                >
-                  Change Phone Number
-                </Button>
+                <div className="flex space-x-2">
+                  <Button
+                    variant="ghost"
+                    onClick={() => setStep("phone")}
+                    className="flex-1 text-purple-600"
+                  >
+                    Change Phone Number
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={handleResendOTP}
+                    className="flex-1 text-purple-600 border-purple-600"
+                    disabled={loading}
+                  >
+                    Resend OTP
+                  </Button>
+                </div>
               </>
             )}
           </CardContent>
