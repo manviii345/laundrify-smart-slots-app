@@ -123,7 +123,23 @@ const BookSlot = () => {
     setLoading(true);
 
     try {
-      const userId = localStorage.getItem("userId");
+     const {
+  data: { user },
+  error: userError
+} = await supabase.auth.getUser();
+
+if (userError || !user) {
+  toast({
+    title: "Authentication Error",
+    description: "Please login again",
+    variant: "destructive"
+  });
+  setLoading(false);
+  return;
+}
+
+const userId = user.id;
+
       const orderId = crypto.randomUUID();
       const barcode = `LDY${Date.now().toString().slice(-8)}`;
       
