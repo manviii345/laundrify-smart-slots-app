@@ -1,5 +1,5 @@
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,8 +8,14 @@ import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ArrowLeft, Calendar, Package, QrCode } from "lucide-react";
+import { ArrowLeft, Package, Plus, Minus } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+
+interface ClothingItem {
+  type: string;
+  quantity: number;
+}
 
 const BookSlot = () => {
   const navigate = useNavigate();
@@ -18,12 +24,70 @@ const BookSlot = () => {
     roomNumber: "",
     phoneNumber: localStorage.getItem("userPhone") || "",
     laundryType: "normal",
-    pickupType: "self-drop",
     preferredDate: "",
     preferredTime: "",
     specialInstructions: ""
   });
+  const [clothingItems, setClothingItems] = useState<ClothingItem[]>([
+    { type: "shirts", quantity: 0 },
+    { type: "jeans", quantity: 0 },
+    { type: "trousers", quantity: 0 },
+    { type: "underwear", quantity: 0 },
+    { type: "socks", quantity: 0 },
+    { type: "jackets", quantity: 0 },
+    { type: "sweaters", quantity: 0 },
+    { type: "dresses", quantity: 0 },
+    { type: "skirts", quantity: 0 },
+    { type: "others", quantity: 0 }
+  ]);
+  const [availableSlots, setAvailableSlots] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    loadAvailableSlots();
+  }, [formData.preferredDate]);
+
+  const loadAvailableSlots = async () => {
+    if (!formData.preferredDate) return;
+    
+    try {
+      const { data: slots } = await supabase
+        .from('time_slots')
+        .select('*')
+        .eq('date', formData.preferredDate)
+        .eq('is_active', true)
+        .order('time_range');
+      
+      setAvailableSlots(slots || []);
+    } catch (error) {
+      console.error('Error loading slots:', error);
+    }
+  };
+
+  const updateClothingQuantity = (type: string, change: number) => {
+    const totalItems = clothingItems.reduce((sum, item) => sum + item.quantity, 0);
+    
+    if (change > 0 && totalItems >= 10) {
+      toast({
+        title: "Maximum Limit Reached",
+        description: "You can add maximum 10 clothing items",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setClothingItems(prev => 
+      prev.map(item => 
+        item.type === type 
+          ? { ...item, quantity: Math.max(0, item.quantity + change) }
+          : item
+      )
+    );
+  };
+
+  const getTotalItems = () => {
+    return clothingItems.reduce((sum, item) => sum + item.quantity, 0);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,45 +101,88 @@ const BookSlot = () => {
       return;
     }
 
+    const totalItems = getTotalItems();
+    if (totalItems === 0) {
+      toast({
+        title: "No Items Selected",
+        description: "Please select at least one clothing item",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (totalItems > 10) {
+      toast({
+        title: "Too Many Items",
+        description: "Maximum 10 clothing items allowed",
+        variant: "destructive"
+      });
+      return;
+    }
+
     setLoading(true);
 
-    // Simulate booking process
-    setTimeout(() => {
-      const orderId = Date.now().toString();
-      const barcode = `LDY${orderId.slice(-8)}`;
+    try {
+      const userId = localStorage.getItem("userId");
+      const orderId = crypto.randomUUID();
+      const barcode = `LDY${Date.now().toString().slice(-8)}`;
       
-      const newOrder = {
-        id: orderId,
-        type: formData.laundryType as "normal" | "stain",
-        pickupType: formData.pickupType as "self-drop" | "pickup",
-        status: "pending" as const,
-        createdAt: new Date().toISOString(),
-        scheduledPickup: `${formData.preferredDate} at ${formData.preferredTime}`,
-        barcode: barcode,
-        studentName: formData.studentName,
-        roomNumber: formData.roomNumber,
-        specialInstructions: formData.specialInstructions
-      };
+      // Find the selected slot
+      const selectedSlot = availableSlots.find(slot => slot.time_range === formData.preferredTime);
+      
+      // Create the order
+      const { error: orderError } = await supabase
+        .from('laundry_orders')
+        .insert([{
+          id: orderId,
+          user_id: userId,
+          student_name: formData.studentName,
+          room_number: formData.roomNumber,
+          phone_number: formData.phoneNumber,
+          laundry_type: formData.laundryType,
+          preferred_date: formData.preferredDate,
+          preferred_time: formData.preferredTime,
+          special_instructions: formData.specialInstructions,
+          barcode: barcode,
+          slot_id: selectedSlot?.id,
+          status: 'pending'
+        }]);
 
-      // Save to localStorage
-      const existingOrders = JSON.parse(localStorage.getItem("studentOrders") || "[]");
-      existingOrders.push(newOrder);
-      localStorage.setItem("studentOrders", JSON.stringify(existingOrders));
+      if (orderError) throw orderError;
 
-      // Also save for admin dashboard
-      const allOrders = JSON.parse(localStorage.getItem("allOrders") || "[]");
-      allOrders.push(newOrder);
-      localStorage.setItem("allOrders", JSON.stringify(allOrders));
+      // Add clothing items
+      const clothingInserts = clothingItems
+        .filter(item => item.quantity > 0)
+        .map(item => ({
+          order_id: orderId,
+          clothing_type: item.type,
+          quantity: item.quantity
+        }));
 
-      setLoading(false);
+      if (clothingInserts.length > 0) {
+        const { error: clothingError } = await supabase
+          .from('clothing_items')
+          .insert(clothingInserts);
+
+        if (clothingError) throw clothingError;
+      }
+
       toast({
         title: "Booking Confirmed!",
         description: `Your laundry slot has been booked. Order ID: ${orderId.slice(-6)}`,
       });
 
-      // Navigate to confirmation page with order details
       navigate(`/booking-confirmation?orderId=${orderId}&barcode=${barcode}`);
-    }, 2000);
+    } catch (error) {
+      console.error('Booking error:', error);
+      toast({
+        title: "Booking Failed",
+        description: "Please try again later",
+        variant: "destructive"
+      });
+    }
+    
+    setLoading(false);
   };
 
   return (
@@ -97,7 +204,7 @@ const BookSlot = () => {
             </div>
             <CardTitle className="text-2xl">Book Laundry Slot</CardTitle>
             <CardDescription>
-              Fill in your details to book a laundry slot
+              Fill in your details and sort your clothes (max 10 items)
             </CardDescription>
           </CardHeader>
 
@@ -129,16 +236,47 @@ const BookSlot = () => {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="phoneNumber">Phone Number</Label>
-                <Input
-                  id="phoneNumber"
-                  value={formData.phoneNumber}
-                  onChange={(e) => setFormData({...formData, phoneNumber: e.target.value})}
-                  placeholder="Your phone number"
-                  className="rounded-xl"
-                  disabled
-                />
+              {/* Clothing Items Section */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <Label className="text-lg font-semibold">Sort Your Clothes ({getTotalItems()}/10)</Label>
+                  <div className="text-sm text-gray-500">
+                    {getTotalItems() === 10 && "Maximum limit reached"}
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  {clothingItems.map((item) => (
+                    <div key={item.type} className="border rounded-xl p-4 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium capitalize">{item.type}</span>
+                        <div className="flex items-center space-x-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateClothingQuantity(item.type, -1)}
+                            disabled={item.quantity === 0}
+                            className="h-8 w-8 p-0 rounded-full"
+                          >
+                            <Minus className="h-4 w-4" />
+                          </Button>
+                          <span className="w-8 text-center font-medium">{item.quantity}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => updateClothingQuantity(item.type, 1)}
+                            disabled={getTotalItems() >= 10}
+                            className="h-8 w-8 p-0 rounded-full"
+                          >
+                            <Plus className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
 
               {/* Laundry Type */}
@@ -166,31 +304,6 @@ const BookSlot = () => {
                 </RadioGroup>
               </div>
 
-              {/* Pickup Type */}
-              <div className="space-y-3">
-                <Label>Pickup Type</Label>
-                <RadioGroup
-                  value={formData.pickupType}
-                  onValueChange={(value) => setFormData({...formData, pickupType: value})}
-                  className="grid grid-cols-2 gap-4"
-                >
-                  <div className="flex items-center space-x-2 border rounded-xl p-4">
-                    <RadioGroupItem value="self-drop" id="self-drop" />
-                    <Label htmlFor="self-drop" className="flex-1 cursor-pointer">
-                      <div className="font-medium">Self Drop</div>
-                      <div className="text-sm text-gray-500">Drop at center</div>
-                    </Label>
-                  </div>
-                  <div className="flex items-center space-x-2 border rounded-xl p-4">
-                    <RadioGroupItem value="pickup" id="pickup" />
-                    <Label htmlFor="pickup" className="flex-1 cursor-pointer">
-                      <div className="font-medium">Pickup Service</div>
-                      <div className="text-sm text-gray-500">We'll collect</div>
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-
               {/* Schedule */}
               <div className="grid md:grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -206,7 +319,7 @@ const BookSlot = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="preferredTime">Preferred Time *</Label>
+                  <Label htmlFor="preferredTime">Available Time Slots *</Label>
                   <Select
                     value={formData.preferredTime}
                     onValueChange={(value) => setFormData({...formData, preferredTime: value})}
@@ -215,11 +328,11 @@ const BookSlot = () => {
                       <SelectValue placeholder="Select time slot" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="09:00-11:00">9:00 AM - 11:00 AM</SelectItem>
-                      <SelectItem value="11:00-13:00">11:00 AM - 1:00 PM</SelectItem>
-                      <SelectItem value="13:00-15:00">1:00 PM - 3:00 PM</SelectItem>
-                      <SelectItem value="15:00-17:00">3:00 PM - 5:00 PM</SelectItem>
-                      <SelectItem value="17:00-19:00">5:00 PM - 7:00 PM</SelectItem>
+                      {availableSlots.map((slot) => (
+                        <SelectItem key={slot.id} value={slot.time_range}>
+                          {slot.time_range} ({slot.current_bookings}/{slot.max_capacity} booked)
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -240,7 +353,7 @@ const BookSlot = () => {
 
               <Button
                 type="submit"
-                disabled={loading}
+                disabled={loading || getTotalItems() === 0}
                 className="w-full bg-purple-600 hover:bg-purple-700 rounded-xl h-12"
               >
                 {loading ? "Booking..." : "Confirm Booking"}

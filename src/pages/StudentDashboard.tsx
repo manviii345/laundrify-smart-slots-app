@@ -4,34 +4,76 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { LogOut, Plus, QrCode, Clock, Truck, Package } from "lucide-react";
+import { LogOut, Plus, QrCode, Clock, Truck, Package, Bell } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
-
-interface LaundryOrder {
-  id: string;
-  type: "normal" | "stain";
-  pickupType: "self-drop" | "pickup";
-  status: "pending" | "pickup" | "washing" | "drying" | "completed" | "delivered";
-  createdAt: string;
-  scheduledPickup?: string;
-  barcode: string;
-}
+import { supabase } from "@/integrations/supabase/client";
 
 const StudentDashboard = () => {
   const navigate = useNavigate();
-  const [orders, setOrders] = useState<LaundryOrder[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load existing orders from localStorage
-    const savedOrders = localStorage.getItem("studentOrders");
-    if (savedOrders) {
-      setOrders(JSON.parse(savedOrders));
-    }
+    loadUserData();
   }, []);
+
+  const loadUserData = async () => {
+    const userId = localStorage.getItem("userId");
+    if (!userId) {
+      navigate("/student-login");
+      return;
+    }
+
+    try {
+      // Load orders
+      const { data: ordersData } = await supabase
+        .from('laundry_orders')
+        .select(`
+          *,
+          clothing_items (*)
+        `)
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      // Load notifications
+      const { data: notificationsData } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      setOrders(ordersData || []);
+      setNotifications(notificationsData || []);
+    } catch (error) {
+      console.error('Error loading data:', error);
+    }
+    setLoading(false);
+  };
+
+  const markNotificationAsRead = async (notificationId: string) => {
+    try {
+      await supabase
+        .from('notifications')
+        .update({ is_read: true })
+        .eq('id', notificationId);
+      
+      setNotifications(prev => 
+        prev.map(notif => 
+          notif.id === notificationId 
+            ? { ...notif, is_read: true }
+            : notif
+        )
+      );
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+    }
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("userRole");
     localStorage.removeItem("userPhone");
+    localStorage.removeItem("userId");
     toast({
       title: "Logged Out",
       description: "You have been successfully logged out",
@@ -61,6 +103,21 @@ const StudentDashboard = () => {
     }
   };
 
+  const unreadNotifications = notifications.filter(n => !n.is_read);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 bg-purple-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Package className="h-8 w-8 text-purple-600 animate-pulse" />
+          </div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-white">
       {/* Header */}
@@ -75,21 +132,31 @@ const StudentDashboard = () => {
               <p className="text-sm text-gray-600">Student Dashboard</p>
             </div>
           </div>
-          <Button
-            variant="ghost"
-            onClick={handleLogout}
-            className="text-gray-600 hover:text-red-600"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Logout
-          </Button>
+          <div className="flex items-center space-x-4">
+            {unreadNotifications.length > 0 && (
+              <div className="relative">
+                <Bell className="h-6 w-6 text-purple-600" />
+                <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
+                  {unreadNotifications.length}
+                </span>
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              onClick={handleLogout}
+              className="text-gray-600 hover:text-red-600"
+            >
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
+            </Button>
+          </div>
         </div>
       </header>
 
       <div className="container mx-auto px-4 py-8">
         <div className="grid lg:grid-cols-3 gap-8">
           {/* Quick Actions */}
-          <div className="lg:col-span-1">
+          <div className="lg:col-span-1 space-y-6">
             <Card className="rounded-2xl shadow-lg">
               <CardHeader>
                 <CardTitle className="flex items-center">
@@ -123,6 +190,30 @@ const StudentDashboard = () => {
                 </Button>
               </CardContent>
             </Card>
+
+            {/* Notifications */}
+            {unreadNotifications.length > 0 && (
+              <Card className="rounded-2xl shadow-lg">
+                <CardHeader>
+                  <CardTitle className="flex items-center">
+                    <Bell className="h-5 w-5 mr-2 text-purple-600" />
+                    Notifications
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {unreadNotifications.slice(0, 3).map((notification) => (
+                    <div 
+                      key={notification.id}
+                      className="border rounded-xl p-3 cursor-pointer hover:bg-purple-50"
+                      onClick={() => markNotificationAsRead(notification.id)}
+                    >
+                      <h4 className="font-medium text-sm">{notification.title}</h4>
+                      <p className="text-xs text-gray-600 mt-1">{notification.message}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
           </div>
 
           {/* Orders List */}
@@ -161,7 +252,7 @@ const StudentDashboard = () => {
                               <div>
                                 <h4 className="font-semibold">Order #{order.id.slice(-6).toUpperCase()}</h4>
                                 <p className="text-sm text-gray-600">
-                                  {order.type === "normal" ? "Normal Wash" : "Stain/Warm Wash"}
+                                  {order.laundry_type === "normal" ? "Normal Wash" : "Stain/Warm Wash"}
                                 </p>
                               </div>
                             </div>
@@ -171,17 +262,18 @@ const StudentDashboard = () => {
                           </div>
                           <div className="grid grid-cols-2 gap-4 text-sm text-gray-600">
                             <div>
-                              <span className="font-medium">Pickup:</span> {order.pickupType}
+                              <span className="font-medium">Items:</span> {order.clothing_items?.reduce((sum: number, item: any) => sum + item.quantity, 0) || 0}
                             </div>
                             <div>
-                              <span className="font-medium">Created:</span> {new Date(order.createdAt).toLocaleDateString()}
+                              <span className="font-medium">Created:</span> {new Date(order.created_at).toLocaleDateString()}
+                            </div>
+                            <div>
+                              <span className="font-medium">Date:</span> {order.preferred_date}
+                            </div>
+                            <div>
+                              <span className="font-medium">Time:</span> {order.preferred_time}
                             </div>
                           </div>
-                          {order.scheduledPickup && (
-                            <div className="mt-2 text-sm text-gray-600">
-                              <span className="font-medium">Scheduled:</span> {order.scheduledPickup}
-                            </div>
-                          )}
                         </CardContent>
                       </Card>
                     ))}

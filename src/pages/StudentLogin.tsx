@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ArrowLeft, Phone, MessageSquare } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 
 const StudentLogin = () => {
   const navigate = useNavigate();
@@ -26,15 +27,40 @@ const StudentLogin = () => {
     }
 
     setLoading(true);
-    // Simulate OTP sending
-    setTimeout(() => {
+    try {
+      // Create or get user with phone number
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('*')
+        .eq('phone_number', phoneNumber)
+        .single();
+
+      if (!existingUser) {
+        // Create new user
+        const { error } = await supabase
+          .from('users')
+          .insert([{ phone_number: phoneNumber, role: 'student' }]);
+        
+        if (error) throw error;
+      }
+
+      // For demo purposes, we'll simulate OTP sending
+      setTimeout(() => {
+        setLoading(false);
+        setStep("otp");
+        toast({
+          title: "OTP Sent!",
+          description: `Verification code sent to ${phoneNumber}`,
+        });
+      }, 1500);
+    } catch (error) {
       setLoading(false);
-      setStep("otp");
       toast({
-        title: "OTP Sent!",
-        description: `Verification code sent to ${phoneNumber}`,
+        title: "Error",
+        description: "Failed to send OTP. Please try again.",
+        variant: "destructive"
       });
-    }, 1500);
+    }
   };
 
   const handleVerifyOTP = async () => {
@@ -48,17 +74,37 @@ const StudentLogin = () => {
     }
 
     setLoading(true);
-    // Simulate OTP verification
-    setTimeout(() => {
-      setLoading(false);
-      localStorage.setItem("userRole", "student");
-      localStorage.setItem("userPhone", phoneNumber);
+    try {
+      // For demo purposes, accept any 6-digit OTP
+      // In production, you would verify the actual OTP
+      
+      // Get user data
+      const { data: userData } = await supabase
+        .from('users')
+        .select('*')
+        .eq('phone_number', phoneNumber)
+        .single();
+
+      if (userData) {
+        // Store user info in localStorage for demo
+        localStorage.setItem("userRole", userData.role);
+        localStorage.setItem("userPhone", phoneNumber);
+        localStorage.setItem("userId", userData.id);
+        
+        toast({
+          title: "Login Successful!",
+          description: "Welcome to Laundrify",
+        });
+        navigate("/student-dashboard");
+      }
+    } catch (error) {
       toast({
-        title: "Login Successful!",
-        description: "Welcome to Laundrify",
+        title: "Login Failed",
+        description: "Please try again",
+        variant: "destructive"
       });
-      navigate("/student-dashboard");
-    }, 1500);
+    }
+    setLoading(false);
   };
 
   return (

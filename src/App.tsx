@@ -8,7 +8,7 @@ import Index from "./pages/Index";
 import StudentLogin from "./pages/StudentLogin";
 import AdminLogin from "./pages/AdminLogin";
 import StudentDashboard from "./pages/StudentDashboard";
-import AdminDashboard from "./pages/AdminDashboard";
+import AdminDashboard from "./components/AdminDashboard";
 import StaffScan from "./pages/StaffScan";
 import BookSlot from "./pages/BookSlot";
 import BookingConfirmation from "./pages/BookingConfirmation";
